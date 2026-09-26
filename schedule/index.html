@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Расписание занятий</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #222;
+    }
+    h1 { margin-bottom: .5rem; }
+    .error {
+      color: #c33;
+      background: #fee;
+      border: 1px solid #fbb;
+      padding: .75rem 1rem;
+      border-radius: 8px;
+      margin: 1rem 0;
+      display: none;
+    }
+    .lesson {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: .75rem 1rem;
+      margin: .5rem 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .lesson .info { line-height: 1.4; }
+    .lesson .room { font-weight: 600; }
+    .status {
+      font-size: .85rem;
+      padding: .15rem .5rem;
+      border-radius: 999px;
+      background: #eee;
+    }
+    .status-planned   { background: #d1f0e0; color: #0a7; }
+    .status-done      { background: #e5e5e5; color: #555; }
+    .status-cancelled { background: #fdd; color: #c33; text-decoration: line-through; }
+    button {
+      border: none;
+      background: #c33;
+      color: #fff;
+      padding: .35rem .75rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { background: #a22; }
+    form {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+      display: grid;
+      gap: .5rem;
+    }
+    form label { font-size: .9rem; color: #555; }
+    form input, form select {
+      padding: .4rem .6rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font: inherit;
+    }
+    form button {
+      background: #0a7;
+      justify-self: start;
+      margin-top: .25rem;
+    }
+    form button:hover { background: #086; }
+    #empty { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Расписание занятий</h1>
+
+  <div id="error" class="error"></div>
+
+  <form id="create-form">
+    <h3 style="margin:0 0 .5rem">Добавить занятие</h3>
+
+    <label for="group_id">Группа</label>
+    <select id="group_id" required></select>
+
+    <label for="teacher_id">Преподаватель</label>
+    <select id="teacher_id" required></select>
+
+    <label for="subject_id">Предмет</label>
+    <select id="subject_id" required></select>
+
+    <label for="room">Аудитория</label>
+    <input id="room" type="text" placeholder="ауд. 500" required>
+
+    <label for="starts_at">Начало</label>
+    <input id="starts_at" type="datetime-local" required>
+
+    <label for="ends_at">Конец</label>
+    <input id="ends_at" type="datetime-local" required>
+
+    <button type="submit">Добавить</button>
+  </form>
+
+  <div id="list">Загрузка…</div>
+
+  <script>
+    const API = 'http://localhost:8080';
+
+    const listEl   = document.getElementById('list');
+    const errorEl  = document.getElementById('error');
+    const formEl   = document.getElementById('create-form');
+    const groupSel = document.getElementById('group_id');
+    const teachSel = document.getElementById('teacher_id');
+    const subjSel  = document.getElementById('subject_id');
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = 'block';
+    }
+    function clearError() {
+      errorEl.textContent = '';
+      errorEl.style.display = 'none';
+    }
+
+    async function fetchJSON(url, options) {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text.trim()}`);
+      }
+      return res.json();
+    }
+
+    // заполнить выпадающие списки
+    async function loadDictionaries() {
+      const [groups, teachers, subjects] = await Promise.all([
+        fetchJSON(`${API}/groups`),
+        fetchJSON(`${API}/teachers`),
+        fetchJSON(`${API}/subjects`),
+      ]);
+
+      groupSel.innerHTML = groups.map(g =>
+        `<option value="${g.id}">${g.name}</option>`).join('');
+      teachSel.innerHTML = teachers.map(t =>
+        `<option value="${t.id}">${t.full_name}</option>`).join('');
+      subjSel.innerHTML = subjects.map(s =>
+        `<option value="${s.id}">${s.name}</option>`).join('');
+    }
+
+    // список занятий
+    async function loadLessons() {
+      clearError();
+      listEl.textContent = 'Загрузка…';
+      try {
+        const lessons = await fetchJSON(`${API}/lessons`);
+
+        if (!lessons || lessons.length === 0) {
+          listEl.innerHTML = '<p id="empty">Занятий пока нет</p>';
+          return;
+        }
+
+        listEl.innerHTML = lessons.map(l => `
+          <div class="lesson">
+            <div class="info">
+              <div class="room">${l.room}</div>
+              <div>${new Date(l.starts_at).toLocaleString('ru-RU')}
+                   — ${new Date(l.ends_at).toLocaleTimeString('ru-RU')}</div>
+              <span class="status status-${l.status}">${l.status}</span>
+            </div>
+            <button data-id="${l.id}">Удалить</button>
+          </div>
+        `).join('');
+
+        // кнопки удаления
+        listEl.querySelectorAll('button[data-id]').forEach(btn => {
+          btn.addEventListener('click', () => deleteLesson(btn.dataset.id));
+        });
+      } catch (e) {
+        showError('Не удалось загрузить расписание: ' + e.message);
+        listEl.textContent = '';
+      }
+    }
+
+    // создание
+    formEl.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      clearError();
+
+      const body = {
+        group_id:   Number(groupSel.value),
+        teacher_id: Number(teachSel.value),
+        subject_id: Number(subjSel.value),
+        room:       document.getElementById('room').value.trim(),
+        starts_at:  document.getElementById('starts_at').value,
+        ends_at:    document.getElementById('ends_at').value,
+      };
+
+      try {
+        await fetchJSON(`${API}/lessons`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        formEl.reset();
+        await loadLessons();
+      } catch (e) {
+        showError('Не удалось создать занятие: ' + e.message);
+      }
+    });
+
+    // удаление
+    async function deleteLesson(id) {
+      clearError();
+      try {
+        const res = await fetch(`${API}/lessons/${id}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 204) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text.trim()}`);
+        }
+        await loadLessons();
+      } catch (e) {
+        showError('Не удалось удалить занятие: ' + e.message);
+      }
+    }
+
+    // старт
+    (async () => {
+      try {
+        await loadDictionaries();
+        await loadLessons();
+      } catch (e) {
+        showError('Ошибка загрузки: ' + e.message);
+      }
+    })();
+  </script>
+</body>
+</html>
